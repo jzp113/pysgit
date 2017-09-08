@@ -1,0 +1,345 @@
+#include "sgitmd.h"
+
+SgitMd::SgitMd(const std::string &szFlowPath) {
+    this->api = CSgitFtdcMdApi::CreateFtdcMdApi(szFlowPath.c_str());
+    boost::function0<void> f = boost::bind(&SgitMd::processTask, this);
+    this->task_thread = new boost::thread(f);
+}
+
+SgitMd::~SgitMd() {
+    task_thread->interrupt();
+    task_thread->join();
+    delete task_thread;
+    this->api->Release();
+}
+
+void SgitMd::OnFrontConnected() {
+    Task *task = new Task();
+    task->name = ON_FRONT_CONNECTED;
+    this->task_queue.push(task);
+}
+
+void SgitMd::OnFrontDisconnected() {
+    Task *task = new Task();
+    task->name = ON_FRONT_DISCONNECTED;
+    // task->num = nReason;
+    this->task_queue.push(task);
+}
+
+
+void SgitMd::OnRspUserLogin(CSgitFtdcRspUserLoginField *pRspUserLogin, CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
+    Task *task = new Task();
+    task->name = ON_RSP_USER_LOGIN;
+    if (pRspUserLogin)
+        task->payload = RspUserLoginField(*pRspUserLogin);
+    if (pRspInfo)
+        task->resp = RspInfoField(*pRspInfo);
+    task->num = nRequestID;
+    task->final = bIsLast;
+    this->task_queue.push(task);
+}
+
+void SgitMd::OnRspUserLogout(CSgitFtdcUserLogoutField *pUserLogout, CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
+    Task *task = new Task();
+    task->name = ON_RSP_USER_LOGOUT;
+    if (pUserLogout)
+        task->payload = UserLogoutField(*pUserLogout);
+    if (pRspInfo)
+        task->resp = RspInfoField(*pRspInfo);
+    task->num = nRequestID;
+    task->final = bIsLast;
+    this->task_queue.push(task);
+}
+
+void SgitMd::OnRspError(CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
+    Task *task = new Task();
+    task->name = ON_RSP_ERROR;
+    if (pRspInfo)
+        task->resp = RspInfoField(*pRspInfo);
+    task->num = nRequestID;
+    task->final = bIsLast;
+    this->task_queue.push(task);
+}
+
+
+void SgitMd::OnRtnDepthMarketData(CSgitFtdcDepthMarketDataField *pDepthMarketData) {
+    Task *task = new Task();
+    task->name = ON_RTN_DEPTH_MARKET_DATA;
+    if (pDepthMarketData)
+        task->payload = DepthMarketDataField(*pDepthMarketData);
+    this->task_queue.push(task);
+}
+
+
+void SgitMd::processTask() {
+    while (true) {
+        Task* task = this->task_queue.wait_and_pop();
+        WithdrawGIL lock;
+        switch (task->name) {
+            case ON_FRONT_CONNECTED: {
+                this->onFrontConnected();
+                break;
+            }
+            case ON_FRONT_DISCONNECTED: {
+                this->onFrontDisconnected();
+                break;
+            }
+            case ON_RSP_USER_LOGIN: {
+                const object &payload = task->payload.empty() ? object() : object(any_cast<RspUserLoginField &>(task->payload));
+                const object &resp = task->resp.empty() ? object() : object(any_cast<RspInfoField &>(task->resp));
+                this->onRspUserLogin(const_cast<object &>(payload), const_cast<object &>(resp), task->num, task->final);
+                break;
+            }
+            case ON_RSP_USER_LOGOUT: {
+                const object &payload = task->payload.empty() ? object() : object(any_cast<UserLogoutField &>(task->payload));
+                const object &resp = task->resp.empty() ? object() : object(any_cast<RspInfoField &>(task->resp));
+                this->onRspUserLogout(const_cast<object &>(payload), const_cast<object &>(resp), task->num, task->final);
+                break;
+            }
+            case ON_RSP_ERROR: {
+                const object &resp = task->resp.empty() ? object() : object(any_cast<RspInfoField &>(task->resp));
+                this->onRspError(const_cast<object &>(resp), task->num, task->final);
+                break;
+            }
+            case ON_RTN_DEPTH_MARKET_DATA: {
+                const object &payload = task->payload.empty() ? object() : object(any_cast<DepthMarketDataField &>(task->payload));
+                this->onRtnDepthMarketData(const_cast<object &>(payload));
+                break;
+            }
+        }
+        delete task;
+    }
+}
+
+
+void SgitMd::release() {
+    DepositGIL unlocker;
+    this->api->Release();
+}
+
+void SgitMd::init() {
+    DepositGIL unlocker;
+    this->api->Init(false);
+}
+
+void SgitMd::ready() {
+    DepositGIL unlocker;
+    this->api->Ready();
+}
+
+int SgitMd::join() {
+    DepositGIL unlocker;
+    return this->api->Join();
+}
+
+const char *SgitMd::getTradingDay() {
+    return this->api->GetTradingDay();
+}
+
+void SgitMd::registerFront(const std::string &szFrontAddress) {
+    this->api->RegisterFront(const_cast<char *>(szFrontAddress.c_str()));
+}
+
+void SgitMd::registerSpi() {
+    this->api->RegisterSpi(this);
+}
+
+
+int SgitMd::subscribeMarketData(list &instrumentIDs) {
+    int length = len(instrumentIDs);
+    char **array = new char*[length];
+    int result;
+    for (int i = 0; i < length; i++) {
+        *(array + i) = const_cast<char *>(extract<const char *>(instrumentIDs[i])());
+        CSgitSubQuotField req;
+        memset(&req, 0, sizeof (req));
+        sprintf(req.ContractID, "%s", *(array + i));
+        result = this->api->SubQuot(&req);
+    };
+    delete array;
+    return result;
+}
+
+
+int SgitMd::reqUserLogin(object &reqUserLoginField, int requestId) {
+    ReqUserLoginField *p1 = extract<ReqUserLoginField *>(reqUserLoginField);
+    return this->api->ReqUserLogin(p1, requestId);
+}
+
+int SgitMd::reqUserLogout(object &userLogoutField, int requestId) {
+    UserLogoutField *p1 = extract<UserLogoutField *>(userLogoutField);
+    return this->api->ReqUserLogout(p1, requestId);
+}
+
+struct SgitMdWrap : SgitMd, wrapper<SgitMd> {
+
+    SgitMdWrap(const std::string &szFlowPath = "")
+            : SgitMd(szFlowPath) {}
+
+    virtual void onFrontConnected() {
+        try {
+            this->get_override("onFrontConnected")();
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+
+    virtual void onFrontDisconnected() {
+        try {
+            this->get_override("onFrontDisconnected")();
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+
+    virtual void onRspUserLogin(object &rspUserLoginField, object &rspInfoField, int requestId, bool final) {
+        try {
+            this->get_override("onRspUserLogin")(rspUserLoginField, rspInfoField, requestId, final);
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+
+    virtual void onRspUserLogout(object &userLogoutField, object &rspInfoField, int requestId, bool final) {
+        try {
+            this->get_override("onRspUserLogout")(userLogoutField, rspInfoField, requestId, final);
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+
+    virtual void onRspError(object &rspInfoField, int requestId, bool final) {
+        try {
+            this->get_override("onRspError")(rspInfoField, requestId, final);
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+
+    virtual void onRtnDepthMarketData(object &depthMarketDataField) {
+        try {
+            this->get_override("onRtnDepthMarketData")(depthMarketDataField);
+        } catch (error_already_set const &) {
+            PyErr_Print();
+        }
+    };
+};
+
+BOOST_PYTHON_MODULE(sgitmd) {
+    if (!PyEval_ThreadsInitialized())
+        PyEval_InitThreads();	//导入时运行，保证先创建GIL
+
+    class_<SgitMdWrap, boost::noncopyable>("SgitMd", init<const std::string &>())
+            .def("onFrontConnected", pure_virtual(&SgitMdWrap::onFrontConnected))
+            .def("onFrontDisconnected", pure_virtual(&SgitMdWrap::onFrontDisconnected))
+            // .def("onHeartBeatWarning", pure_virtual(&SgitMdWrap::onHeartBeatWarning))
+            .def("onRspUserLogin", pure_virtual(&SgitMdWrap::onRspUserLogin))
+            .def("onRspUserLogout", pure_virtual(&SgitMdWrap::onRspUserLogout))
+            .def("onRspError", pure_virtual(&SgitMdWrap::onRspError))
+            // .def("onRspSubMarketData", pure_virtual(&SgitMdWrap::onRspSubMarketData))
+            // .def("onRspUnSubMarketData", pure_virtual(&SgitMdWrap::onRspUnSubMarketData))
+            // .def("onRspSubForQuoteRsp", pure_virtual(&SgitMdWrap::onRspSubForQuoteRsp))
+            // .def("onRspUnSubForQuoteRsp", pure_virtual(&SgitMdWrap::onRspUnSubForQuoteRsp))
+            .def("onRtnDepthMarketData", pure_virtual(&SgitMdWrap::onRtnDepthMarketData))
+            // .def("onRtnForQuoteRsp", pure_virtual(&SgitMdWrap::onRtnForQuoteRsp))
+            // .def("getApiVersion", &SgitMdWrap::getApiVersion)
+            .def("release", &SgitMdWrap::release)
+            .def("init", &SgitMdWrap::init)
+            .def("ready", &SgitMdWrap::ready)
+            .def("join", &SgitMdWrap::join)
+            .def("getTradingDay", &SgitMdWrap::getTradingDay)
+            .def("registerFront", &SgitMdWrap::registerFront)
+            // .def("registerNameServer", &SgitMdWrap::registerNameServer)
+            // .def("registerFensUserInfo", &SgitMdWrap::registerFensUserInfo)
+            .def("registerSpi", &SgitMdWrap::registerSpi)
+            .def("subscribeMarketData", &SgitMdWrap::subscribeMarketData)
+            // .def("unSubscribeMarketData", &SgitMdWrap::unSubscribeMarketData)
+            // .def("subscribeForQuoteRsp", &SgitMdWrap::subscribeForQuoteRsp)
+            // .def("unSubscribeForQuoteRsp", &SgitMdWrap::unSubscribeForQuoteRsp)
+            .def("reqUserLogin", &SgitMdWrap::reqUserLogin)
+            .def("reqUserLogout", &SgitMdWrap::reqUserLogout);
+
+
+    class_<ReqUserLoginField>("ReqUserLoginField")
+            .add_property("tradingDay", &ReqUserLoginField::getTradingDay, &ReqUserLoginField::setTradingDay)
+            .add_property("brokerID", &ReqUserLoginField::getBrokerID, &ReqUserLoginField::setBrokerID)
+            .add_property("userID", &ReqUserLoginField::getUserID, &ReqUserLoginField::setUserID)
+            .add_property("password", &ReqUserLoginField::getPassword, &ReqUserLoginField::setPassword)
+            .add_property("userProductInfo", &ReqUserLoginField::getUserProductInfo, &ReqUserLoginField::setUserProductInfo)
+            .add_property("interfaceProductInfo", &ReqUserLoginField::getInterfaceProductInfo, &ReqUserLoginField::setInterfaceProductInfo)
+            .add_property("protocolInfo", &ReqUserLoginField::getProtocolInfo, &ReqUserLoginField::setProtocolInfo)
+            .add_property("macAddress", &ReqUserLoginField::getMacAddress, &ReqUserLoginField::setMacAddress)
+            .add_property("oneTimePassword", &ReqUserLoginField::getOneTimePassword, &ReqUserLoginField::setOneTimePassword)
+            .add_property("clientIPAddress", &ReqUserLoginField::getClientIPAddress, &ReqUserLoginField::setClientIPAddress);
+
+    class_<RspUserLoginField>("RspUserLoginField")
+            .add_property("tradingDay", &RspUserLoginField::getTradingDay, &RspUserLoginField::setTradingDay)
+            .add_property("loginTime", &RspUserLoginField::getLoginTime, &RspUserLoginField::setLoginTime)
+            .add_property("brokerID", &RspUserLoginField::getBrokerID, &RspUserLoginField::setBrokerID)
+            .add_property("userID", &RspUserLoginField::getUserID, &RspUserLoginField::setUserID)
+            .add_property("systemName", &RspUserLoginField::getSystemName, &RspUserLoginField::setSystemName)
+            .def_readwrite("frontID", &RspUserLoginField::FrontID)
+            .def_readwrite("sessionID", &RspUserLoginField::SessionID)
+            .add_property("maxOrderRef", &RspUserLoginField::getMaxOrderRef, &RspUserLoginField::setMaxOrderRef)
+            .add_property("SHFETime", &RspUserLoginField::getSHFETime, &RspUserLoginField::setSHFETime)
+            .add_property("DCETime", &RspUserLoginField::getDCETime, &RspUserLoginField::setDCETime)
+            .add_property("CZCETime", &RspUserLoginField::getCZCETime, &RspUserLoginField::setCZCETime)
+            .add_property("FFEXTime", &RspUserLoginField::getFFEXTime, &RspUserLoginField::setFFEXTime);
+
+    class_<UserLogoutField>("UserLogoutField")
+            .add_property("brokerID", &UserLogoutField::getBrokerID, &UserLogoutField::setBrokerID)
+            .add_property("userID", &UserLogoutField::getUserID, &UserLogoutField::setUserID);
+
+    class_<RspInfoField>("RspInfoField")
+            .def_readwrite("errorID", &RspInfoField::ErrorID)
+            .add_property("errorMsg", &RspInfoField::getErrorMsg, &RspInfoField::setErrorMsg);
+
+    class_<DepthMarketDataField>("DepthMarketDataField")
+            .add_property("tradingDay", &DepthMarketDataField::getTradingDay, &DepthMarketDataField::setTradingDay)
+            .add_property("instrumentID", &DepthMarketDataField::getInstrumentID, &DepthMarketDataField::setInstrumentID)
+            .add_property("exchangeID", &DepthMarketDataField::getExchangeID, &DepthMarketDataField::setExchangeID)
+            .add_property("exchangeInstID", &DepthMarketDataField::getExchangeInstID, &DepthMarketDataField::setExchangeInstID)
+            .def_readwrite("lastPrice", &DepthMarketDataField::LastPrice)
+            .def_readwrite("preSettlementPrice", &DepthMarketDataField::PreSettlementPrice)
+            .def_readwrite("preClosePrice", &DepthMarketDataField::PreClosePrice)
+            .def_readwrite("preOpenInterest", &DepthMarketDataField::PreOpenInterest)
+            .def_readwrite("openPrice", &DepthMarketDataField::OpenPrice)
+            .def_readwrite("highestPrice", &DepthMarketDataField::HighestPrice)
+            .def_readwrite("lowestPrice", &DepthMarketDataField::LowestPrice)
+            .def_readwrite("volume", &DepthMarketDataField::Volume)
+            .def_readwrite("turnover", &DepthMarketDataField::Turnover)
+            .def_readwrite("openInterest", &DepthMarketDataField::OpenInterest)
+            .def_readwrite("closePrice", &DepthMarketDataField::ClosePrice)
+            .def_readwrite("settlementPrice", &DepthMarketDataField::SettlementPrice)
+            .def_readwrite("upperLimitPrice", &DepthMarketDataField::UpperLimitPrice)
+            .def_readwrite("lowerLimitPrice", &DepthMarketDataField::LowerLimitPrice)
+            .def_readwrite("preDelta", &DepthMarketDataField::PreDelta)
+            .def_readwrite("currDelta", &DepthMarketDataField::CurrDelta)
+            .add_property("updateTime", &DepthMarketDataField::getUpdateTime, &DepthMarketDataField::setUpdateTime)
+            .def_readwrite("updateMillisec", &DepthMarketDataField::UpdateMillisec)
+            .def_readwrite("bidPrice1", &DepthMarketDataField::BidPrice1)
+            .def_readwrite("bidVolume1", &DepthMarketDataField::BidVolume1)
+            .def_readwrite("askPrice1", &DepthMarketDataField::AskPrice1)
+            .def_readwrite("askVolume1", &DepthMarketDataField::AskVolume1)
+            .def_readwrite("bidPrice2", &DepthMarketDataField::BidPrice2)
+            .def_readwrite("bidVolume2", &DepthMarketDataField::BidVolume2)
+            .def_readwrite("askPrice2", &DepthMarketDataField::AskPrice2)
+            .def_readwrite("askVolume2", &DepthMarketDataField::AskVolume2)
+            .def_readwrite("bidPrice3", &DepthMarketDataField::BidPrice3)
+            .def_readwrite("bidVolume3", &DepthMarketDataField::BidVolume3)
+            .def_readwrite("askPrice3", &DepthMarketDataField::AskPrice3)
+            .def_readwrite("askVolume3", &DepthMarketDataField::AskVolume3)
+            .def_readwrite("bidPrice4", &DepthMarketDataField::BidPrice4)
+            .def_readwrite("bidVolume4", &DepthMarketDataField::BidVolume4)
+            .def_readwrite("askPrice4", &DepthMarketDataField::AskPrice4)
+            .def_readwrite("askVolume4", &DepthMarketDataField::AskVolume4)
+            .def_readwrite("bidPrice5", &DepthMarketDataField::BidPrice5)
+            .def_readwrite("bidVolume5", &DepthMarketDataField::BidVolume5)
+            .def_readwrite("askPrice5", &DepthMarketDataField::AskPrice5)
+            .def_readwrite("askVolume5", &DepthMarketDataField::AskVolume5)
+            .def_readwrite("averagePrice", &DepthMarketDataField::AveragePrice);
+
+    class_<SpecificInstrumentField>("SpecificInstrumentField")
+            .add_property("instrumentID", &SpecificInstrumentField::getInstrumentID, &SpecificInstrumentField::setInstrumentID);
+
+}
