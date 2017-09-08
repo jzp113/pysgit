@@ -1,18 +1,24 @@
-pysit
+#pysgit
 
 简介
 -----
-基于boost下对飞鼠（Sgit API）的python封装.
+基于Boost.Python对Sgit的python封装。
 
-环境:python2.7 Linux
+环境: Linux Python2.7
 
 准备:
-- 安装boost,g++
-- `cd lib/sgitapi/linux_x64 & sudo cp *.so /lib & sudo ldconfig`
+
+- 安装boost, g++
+- `cd dev/lib/sgitapi/linux_x64 & sudo cp *.so /lib & sudo ldconfig`
+
 编译:
     进入sgitmd目录,执行make
 
+教程参考api目录下py文件
 
+TODO:
 
+- 优化行情接口
+- 封装交易接口
 
-- [参考xuefu](https://code.google.com/p/pyctp/)使用
+封装过程参考[xuefu](https://github.com/francinexue/xuefu)项目。
