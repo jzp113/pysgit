@@ -1,7 +1,3 @@
-//
-// Created by kyle on 17-5-18.
-//
-
 #ifndef PYCTP_CTPMD_H
 #define PYCTP_CTPMD_H
 
@@ -23,15 +19,17 @@
 
 using namespace boost::python;
 using namespace boost;
+using namespace fstech;
 
-class SgitMd : public CSgitFtdcMdSpi {
+
+class SgitMd : public CThostFtdcMdSpi {
 private:
     boost::thread* task_thread; // 回调函数执行线程
     ConcurrentQueue<Task *> task_queue; //任务队列
-    CSgitFtdcMdApi *api; //API对象
+    CThostFtdcMdApi *api; //API对象
     void processTask();
 public:
-    SgitMd(const std::string &szFlowPath = "");
+    SgitMd(const std::string &szFlowPath = "", bool usingUdp=false, bool multicast=false);
     ~SgitMd();
 
     ///当客户端与交易后台建立起通信连接时（还未登录前），该方法被调用。
@@ -39,39 +37,60 @@ public:
     virtual void onFrontConnected() {};
 
     ///        0x2003 收到错误报文
-    virtual void OnFrontDisconnected();
-    virtual void onFrontDisconnected() {};
+    virtual void OnFrontDisconnected(int nReason);
+    virtual void onFrontDisconnected(int reasonCode) {};
+
+    ///@param nTimeLapse 距离上次接收报文的时间
+    virtual void OnHeartBeatWarning(int nTimeLapse);
+    virtual void onHeartBeatWarning(int lapsedTime) {};
 
     ///登录请求响应
-    virtual void OnRspUserLogin(CSgitFtdcRspUserLoginField *pRspUserLogin, CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void OnRspUserLogin(CThostFtdcRspUserLoginField *pRspUserLogin, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
     virtual void onRspUserLogin(object &rspUserLoginField, object &rspInfoField, int requestId, bool final) {};
 
     ///登出请求响应
-    virtual void OnRspUserLogout(CSgitFtdcUserLogoutField *pUserLogout, CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void OnRspUserLogout(CThostFtdcUserLogoutField *pUserLogout, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
     virtual void onRspUserLogout(object &userLogoutField, object &rspInfoField, int requestId, bool final) {};
 
     ///错误应答
-    virtual void OnRspError(CSgitFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void OnRspError(CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
     virtual void onRspError(object &rspInfoField, int requestId, bool final) {};
 
+    ///订阅行情应答
+    virtual void OnRspSubMarketData(CThostFtdcSpecificInstrumentField *pSpecificInstrument, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void onRspSubMarketData(object &specificInstrumentField, object &rspInfoField, int requestId, bool final) {};
+
+    ///取消订阅行情应答
+    virtual void OnRspUnSubMarketData(CThostFtdcSpecificInstrumentField *pSpecificInstrument, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void onRspUnSubMarketData(object &specificInstrumentField, object &rspInfoField, int requestId, bool final) {};
+
+    ///订阅询价应答
+    virtual void OnRspSubForQuoteRsp(CThostFtdcSpecificInstrumentField *pSpecificInstrument, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void onRspSubForQuoteRsp(object &specificInstrumentField, object &rspInfoField, int requestId, bool final) {};
+
+    ///取消订阅询价应答
+    virtual void OnRspUnSubForQuoteRsp(CThostFtdcSpecificInstrumentField *pSpecificInstrument, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
+    virtual void onRspUnSubForQuoteRsp(object &specificInstrumentField, object &rspInfoField, int requestId, bool final) {};
+
     ///深度行情通知
-    virtual void OnRtnDepthMarketData(CSgitFtdcDepthMarketDataField *pDepthMarketData);
+    virtual void OnRtnDepthMarketData(CThostFtdcDepthMarketDataField *pDepthMarketData);
     virtual void onRtnDepthMarketData(object &depthMarketDataField) {};
 
+    ///询价通知
+    virtual void OnRtnForQuoteRsp(CThostFtdcForQuoteRspField *pForQuoteRsp);
+    virtual void onRtnForQuoteRsp(object &forQuoteRspField) {};
 
-    // const char *getApiVersion();
+    const char *getApiVersion();
 
     void release();
 
     void init();
 
-    void ready();
-
     int join();
 
-	const char *getTradingDay();
+    const char *getTradingDay();
 
-	void registerFront(const std::string &szFrontAddress);
+    void registerFront(const std::string &szFrontAddress);
 
     void registerNameServer(const std::string &szNsAddress);
 
@@ -92,16 +111,16 @@ public:
     int reqUserLogout(object &userLogoutField, int requestId);
 };
 
-struct ReqUserLoginField: CSgitFtdcReqUserLoginField {
+struct ReqUserLoginField: CThostFtdcReqUserLoginField {
 
     ReqUserLoginField() {
         std::memset(this, 0, sizeof(ReqUserLoginField));
     }
 
-    ReqUserLoginField(const CSgitFtdcReqUserLoginField& f): CSgitFtdcReqUserLoginField(f){}
+    ReqUserLoginField(const CThostFtdcReqUserLoginField& f): CThostFtdcReqUserLoginField(f){}
 
-    ReqUserLoginField& operator=(const CSgitFtdcReqUserLoginField& f) {
-        CSgitFtdcReqUserLoginField::operator=(f);
+    ReqUserLoginField& operator=(const CThostFtdcReqUserLoginField& f) {
+        CThostFtdcReqUserLoginField::operator=(f);
         return *this;
     }
 
@@ -186,16 +205,16 @@ struct ReqUserLoginField: CSgitFtdcReqUserLoginField {
     }
 };
 
-struct RspUserLoginField: CSgitFtdcRspUserLoginField {
+struct RspUserLoginField: CThostFtdcRspUserLoginField {
 
     RspUserLoginField() {
         std::memset(this, 0, sizeof(RspUserLoginField));
     }
 
-    RspUserLoginField(const CSgitFtdcRspUserLoginField& f): CSgitFtdcRspUserLoginField(f){}
+    RspUserLoginField(const CThostFtdcRspUserLoginField& f): CThostFtdcRspUserLoginField(f){}
 
-    RspUserLoginField& operator=(const CSgitFtdcRspUserLoginField& f) {
-        CSgitFtdcRspUserLoginField::operator=(f);
+    RspUserLoginField& operator=(const CThostFtdcRspUserLoginField& f) {
+        CThostFtdcRspUserLoginField::operator=(f);
         return *this;
     }
 
@@ -279,18 +298,25 @@ struct RspUserLoginField: CSgitFtdcRspUserLoginField {
         return this->FFEXTime;
     }
 
+    void setINETime(std::string v) {
+        std::copy(v.begin(), v.end(), this->INETime);
+        this->INETime[v.size()] = '\0';
+    }
+    const char* getINETime() {
+        return this->INETime;
+    }
 };
 
-struct UserLogoutField: CSgitFtdcUserLogoutField {
+struct UserLogoutField: CThostFtdcUserLogoutField {
 
     UserLogoutField() {
         std::memset(this, 0, sizeof(UserLogoutField));
     }
 
-    UserLogoutField(const CSgitFtdcUserLogoutField& f): CSgitFtdcUserLogoutField(f){}
+    UserLogoutField(const CThostFtdcUserLogoutField& f): CThostFtdcUserLogoutField(f){}
 
-    UserLogoutField& operator=(const CSgitFtdcUserLogoutField& f) {
-        CSgitFtdcUserLogoutField::operator=(f);
+    UserLogoutField& operator=(const CThostFtdcUserLogoutField& f) {
+        CThostFtdcUserLogoutField::operator=(f);
         return *this;
     }
 
@@ -311,16 +337,16 @@ struct UserLogoutField: CSgitFtdcUserLogoutField {
     }
 };
 
-struct RspInfoField: CSgitFtdcRspInfoField {
+struct RspInfoField: CThostFtdcRspInfoField {
 
     RspInfoField() {
         std::memset(this, 0, sizeof(RspInfoField));
     }
 
-    RspInfoField(const CSgitFtdcRspInfoField& f): CSgitFtdcRspInfoField(f){}
+    RspInfoField(const CThostFtdcRspInfoField& f): CThostFtdcRspInfoField(f){}
 
-    RspInfoField& operator=(const CSgitFtdcRspInfoField& f) {
-        CSgitFtdcRspInfoField::operator=(f);
+    RspInfoField& operator=(const CThostFtdcRspInfoField& f) {
+        CThostFtdcRspInfoField::operator=(f);
         return *this;
     }
 
@@ -333,16 +359,16 @@ struct RspInfoField: CSgitFtdcRspInfoField {
     }
 };
 
-struct DepthMarketDataField: CSgitFtdcDepthMarketDataField {
+struct DepthMarketDataField: CThostFtdcDepthMarketDataField {
 
     DepthMarketDataField() {
         std::memset(this, 0, sizeof(DepthMarketDataField));
     }
 
-    DepthMarketDataField(const CSgitFtdcDepthMarketDataField& f): CSgitFtdcDepthMarketDataField(f){}
+    DepthMarketDataField(const CThostFtdcDepthMarketDataField& f): CThostFtdcDepthMarketDataField(f){}
 
-    DepthMarketDataField& operator=(const CSgitFtdcDepthMarketDataField& f) {
-        CSgitFtdcDepthMarketDataField::operator=(f);
+    DepthMarketDataField& operator=(const CThostFtdcDepthMarketDataField& f) {
+        CThostFtdcDepthMarketDataField::operator=(f);
         return *this;
     }
 
@@ -386,28 +412,128 @@ struct DepthMarketDataField: CSgitFtdcDepthMarketDataField {
         return this->UpdateTime;
     }
 
+    void setActionDay(std::string v) {
+        std::copy(v.begin(), v.end(), this->ActionDay);
+        this->ActionDay[v.size()] = '\0';
+    }
+    const char* getActionDay() {
+        return this->ActionDay;
+    }
 };
 
-struct SpecificInstrumentField: CSgitSubQuotField {
+struct ForQuoteRspField: CThostFtdcForQuoteRspField {
+
+    ForQuoteRspField() {
+        std::memset(this, 0, sizeof(ForQuoteRspField));
+    }
+
+    ForQuoteRspField(const CThostFtdcForQuoteRspField& f): CThostFtdcForQuoteRspField(f){}
+
+    ForQuoteRspField& operator=(const CThostFtdcForQuoteRspField& f) {
+        CThostFtdcForQuoteRspField::operator=(f);
+        return *this;
+    }
+
+    void setTradingDay(std::string v) {
+        std::copy(v.begin(), v.end(), this->TradingDay);
+        this->TradingDay[v.size()] = '\0';
+    }
+    const char* getTradingDay() {
+        return this->TradingDay;
+    }
+
+    void setInstrumentID(std::string v) {
+        std::copy(v.begin(), v.end(), this->InstrumentID);
+        this->InstrumentID[v.size()] = '\0';
+    }
+    const char* getInstrumentID() {
+        return this->InstrumentID;
+    }
+
+    void setForQuoteSysID(std::string v) {
+        std::copy(v.begin(), v.end(), this->ForQuoteSysID);
+        this->ForQuoteSysID[v.size()] = '\0';
+    }
+    const char* getForQuoteSysID() {
+        return this->ForQuoteSysID;
+    }
+
+    void setForQuoteTime(std::string v) {
+        std::copy(v.begin(), v.end(), this->ForQuoteTime);
+        this->ForQuoteTime[v.size()] = '\0';
+    }
+    const char* getForQuoteTime() {
+        return this->ForQuoteTime;
+    }
+
+    void setActionDay(std::string v) {
+        std::copy(v.begin(), v.end(), this->ActionDay);
+        this->ActionDay[v.size()] = '\0';
+    }
+    const char* getActionDay() {
+        return this->ActionDay;
+    }
+
+    void setExchangeID(std::string v) {
+        std::copy(v.begin(), v.end(), this->ExchangeID);
+        this->ExchangeID[v.size()] = '\0';
+    }
+    const char* getExchangeID() {
+        return this->ExchangeID;
+    }
+};
+
+struct SpecificInstrumentField: CThostFtdcSpecificInstrumentField {
 
     SpecificInstrumentField() {
         std::memset(this, 0, sizeof(SpecificInstrumentField));
     }
 
-    SpecificInstrumentField(const CSgitSubQuotField& f): CSgitSubQuotField(f){}
+    SpecificInstrumentField(const CThostFtdcSpecificInstrumentField& f): CThostFtdcSpecificInstrumentField(f){}
 
-    SpecificInstrumentField& operator=(const CSgitSubQuotField& f) {
-        CSgitSubQuotField::operator=(f);
+    SpecificInstrumentField& operator=(const CThostFtdcSpecificInstrumentField& f) {
+        CThostFtdcSpecificInstrumentField::operator=(f);
         return *this;
     }
 
     void setInstrumentID(std::string v) {
-        std::copy(v.begin(), v.end(), this->ContractID);
-        this->ContractID[v.size()] = '\0';
+        std::copy(v.begin(), v.end(), this->InstrumentID);
+        this->InstrumentID[v.size()] = '\0';
     }
     const char* getInstrumentID() {
-        return this->ContractID;
+        return this->InstrumentID;
     }
 };
+
+struct FensUserInfoField: CThostFtdcFensUserInfoField {
+
+    FensUserInfoField() {
+        std::memset(this, 0, sizeof(FensUserInfoField));
+    }
+
+    FensUserInfoField(const CThostFtdcFensUserInfoField& f): CThostFtdcFensUserInfoField(f){}
+
+    FensUserInfoField& operator=(const CThostFtdcFensUserInfoField& f) {
+        CThostFtdcFensUserInfoField::operator=(f);
+        return *this;
+    }
+
+    void setBrokerID(std::string v) {
+        std::copy(v.begin(), v.end(), this->BrokerID);
+        this->BrokerID[v.size()] = '\0';
+    }
+    const char* getBrokerID() {
+        return this->BrokerID;
+    }
+
+    void setUserID(std::string v) {
+        std::copy(v.begin(), v.end(), this->UserID);
+        this->UserID[v.size()] = '\0';
+    }
+    const char* getUserID() {
+        return this->UserID;
+    }
+};
+
 
 #endif //PYCTP_CTPMD_H
