@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-
+import time
 from linux.sgittd import *
 from sgitconf import deploy
+
 
 class SgitTd(SgitTd):
     def __init__(self, szFlowPath):
@@ -25,7 +26,6 @@ class SgitTd(SgitTd):
         values = [(attr, getattr(clas, attr)) for attr in attrs]
         print u"{}: {}".format(name, str(values))
 
-
     def onFrontConnected(self):
         """当客户端与交易后台建立起通信连接时（还未登录前），该方法被调用。"""
         reqLoginField = ReqUserLoginField()
@@ -45,9 +45,10 @@ class SgitTd(SgitTd):
         if RspInfoField.errorID == 0:
             self.frontID = RspUserLoginField.frontID
             self.sessionID = RspUserLoginField.sessionID
+            print "frontID: {}".format(RspUserLoginField.frontID)
             print("orderRef: {}".format(RspUserLoginField.maxOrderRef))
             if RspUserLoginField.maxOrderRef:
-                self._orderRef = RspUserLoginField.maxOrderRef
+                self._orderRef = int(RspUserLoginField.maxOrderRef)
             log = u'交易服务器登陆成功'
             # settlementInfoConfirmField = SettlementInfoConfirmField()
             # settlementInfoConfirmField.brokerID = self._brokerID
@@ -106,14 +107,17 @@ class SgitTd(SgitTd):
             print(
                 u"onRspQryOrder --- brokerID:{0}, orderRef:{1}, limitPrice:{2}, volume:{3}, orderPriceType:{4},"
                 u"direction: {5}, combOffsetFlag: {6},combHedgeFlag:{7},contingentCondition: {8},forceCloseReason: {9},"
-                u"isAutoSuspend: {10}, timeCondition: {11}, volumeCondition:{12}, minVolume: {13}, instrumentID: {14}"
+                u"isAutoSuspend: {10}, timeCondition: {11}, volumeCondition:{12}, OrderSysID: {13}, instrumentID: {14}"
+                u"OrderStatus: {15}"
                     .format(OrderField.brokerID, OrderField.orderRef, OrderField.limitPrice,
                             OrderField.volumeTotalOriginal,
                             OrderField.orderPriceType, OrderField.direction, OrderField.combOffsetFlag,
                             OrderField.combHedgeFlag,
                             OrderField.contingentCondition, OrderField.forceCloseReason, OrderField.isAutoSuspend,
                             OrderField.timeCondition,
-                            OrderField.volumeCondition, OrderField.minVolume, OrderField.instrumentID))
+                            OrderField.volumeCondition, OrderField.orderSysID, OrderField.instrumentID,
+                            OrderField.orderStatus
+                            ))
             self.__rspQryOrder_dic[OrderField.orderRef] = OrderField
 
         if RspInfoField:  # 这个字段竟然能能返回为空
@@ -133,7 +137,7 @@ class SgitTd(SgitTd):
         #                                                  InvestorPositionField.posiDirection,
         #                                                  InvestorPositionField.positionDate,
         #                                                  InvestorPositionField.position))
-        self.logAttr(InvestorPositionField, u"投资者持仓")
+        self.logAttr(InvestorPositionField, u"持仓")
         if RspInfoField:  # 这个字段竟然能能返回为空
             print(u"onRspQryInvestorPosition -- errorCode: {0}, errorMsg:{1}.".format(
                 RspInfoField.errorID, RspInfoField.errorMsg.decode("gbk")))
@@ -199,6 +203,7 @@ class SgitTd(SgitTd):
         # )
         # self.logAttr(InvestorPositionDetailField, u"持仓明细")
         # self.__rspQryInvestorPositionDetaild_dic[InvestorPositionDetailField.tradeID] = InvestorPositionDetailField
+        self.logAttr(InvestorPositionDetailField, u"持仓明细")
         if RspInfoField:  # 这个字段竟然能能返回为空
             print(u"onRspQryInvestorPositionDetail -- errorCode: {0}, errorMsg:{1}.".format(
                 RspInfoField.errorID, RspInfoField.errorMsg.decode("gbk")))
@@ -338,12 +343,12 @@ class SgitTd(SgitTd):
         # inputOrderField.stopPrice = 0
 
         self._requestId += 1
-        self.reqOrderInsert(inputOrderField, self._requestId)
+        print self.reqOrderInsert(inputOrderField, self._requestId)
 
         return str(self._orderRef)
 
     # ----------------------------------------------------------------------
-    def cancelOrder(self, instrumentID, orderID, frontID, sessionID):
+    def cancelOrder(self, instrumentID, exchangeID, orderID):
         """撤单
         :param instrumentID: 合约号
         :param orderID: 订单号
@@ -359,11 +364,16 @@ class SgitTd(SgitTd):
         inputOrderActionField = InputOrderActionField()
         inputOrderActionField.brokerID = self._brokerID
         inputOrderActionField.investorID = self._userID
+        # inputOrderActionField.orderSysID = orderSysID
+        inputOrderActionField.exchangeID = exchangeID
+
         inputOrderActionField.actionFlag = '0'
+
+        inputOrderActionField.userID = self._userID
         inputOrderActionField.instrumentID = instrumentID
         inputOrderActionField.orderRef = orderID
-        inputOrderActionField.frontID = frontID
-        inputOrderActionField.sessionID = sessionID
+        # inputOrderActionField.frontID = frontID
+        # inputOrderActionField.sessionID = sessionID
         self._requestId += 1
         self.reqOrderAction(inputOrderActionField, self._requestId)
 
@@ -375,10 +385,17 @@ class SgitTd(SgitTd):
         #               紧接着成交则OrderSubmitStatus = 3，且orderStatus = 5 ？？
 
         print u"报单通知，limitPrice:{0}, orderRef: {1}, sessionID: {2}, frontID: {3}, notifySequence: {4}, " \
-              u"orderStatus: {5}, orderSubmitStatus: {6}".format(OrderField.limitPrice, OrderField.orderRef,
-                                                                 OrderField.sessionID, OrderField.frontID,
-                                                                 OrderField.notifySequence, OrderField.orderStatus,
-                                                                 OrderField.orderSubmitStatus)
+              u"orderStatus: {5}, orderSubmitStatus: {6}, OrderSysID {6}".format(
+            OrderField.limitPrice,
+            OrderField.orderRef,
+            OrderField.sessionID,
+            OrderField.frontID,
+            OrderField.notifySequence,
+            OrderField.orderStatus,
+            OrderField.orderSubmitStatus,
+            OrderField.orderSysID,
+
+        )
 
     def onRspOrderAction(self, InputOrderActionField, RspInfoField, requestId, final):
         """报单操作请求响应"""
@@ -413,14 +430,15 @@ if __name__ == "__main__":
         - 已触发 THOST_FTDC_OST_Touched 'c'
     """
     sgitTd = SgitTd("./")
-
     sgitTd.login(*deploy['TD'])
 
-    # orderRef = sgitTd.sendOrder("cu1707", "0", "2", "0", 2000, 1)
-    # time.sleep(5)
-    # sgitTd.reqQryOrder()
-    # for i in range(100):
+    time.sleep(1)
+    # orderRef = sgitTd.sendOrder("Ag(T+D)", "0", "2", "0", 3800, 1)
+    sgitTd.reqQryOrder()
+    # for i in range(100nn):
     #     print 'test'
-    #     time.sleep(0.5)
-    # sgitTd.cancelOrder("cu1707", orderRef, sgitTd.frontID, sgitTd.sessionID)
+    #     time.sleep(5)
+    #     sgitTd.qryPosition()
+    # sgitTd.cancelOrder("Ag(T+D)", "SGE", "02139795")
+    # sgitTd.cancelOrder("Ag(T+D)", "SGE", "6")
     sgitTd.join()

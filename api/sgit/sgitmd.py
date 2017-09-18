@@ -37,6 +37,7 @@ class SgitMd(SgitMd):
         else:
             log = u'行情服务登陆失败，错误码:{0}, 错误信息：{1}'.format(
                 RspInfoField.errorID, RspInfoField.errorMsg.decode('gbk'))
+        print "maxorderref" + RspUserLoginField.maxOrderRef
         print(log)
         if self._marketDataInstrumentIDs:
             self.subscribeMarketData(list(self._marketDataInstrumentIDs))
